@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
-import { CheckCircle, XCircle, Clock, AlertTriangle, ChevronDown, ChevronUp, RefreshCw } from 'lucide-react';
-import { PIPELINE_JOBS, MODALITY_CONFIG } from '../mockData';
+import React, { useState, useEffect, useCallback } from 'react';
+import { CheckCircle, XCircle, Clock, AlertTriangle, ChevronDown, ChevronUp, RefreshCw, Download } from 'lucide-react';
+import { MODALITY_CONFIG } from '../mockData';
 import { PIPELINE_STATUS_FILTERS } from '../constants';
 import { countByStatus, formatElapsedTime } from '../utils';
+import { fetchJobs, downloadUrl } from '../../api';
 
 function statusBadge(status) {
   const map = {
@@ -139,6 +140,16 @@ function JobRow({ job }) {
               <p className="text-xs text-red-700 leading-relaxed">{job.error}</p>
             </div>
           )}
+          {job.status === 'complete' && (
+            <a
+              href={downloadUrl(job.id)}
+              download
+              className="mt-4 inline-flex items-center gap-2 px-3 py-2 bg-slate-900 text-white text-xs font-semibold rounded-lg hover:bg-slate-800 transition-colors"
+            >
+              <Download size={13} />
+              Download BIDS dataset (.zip)
+            </a>
+          )}
         </div>
       )}
     </div>
@@ -147,12 +158,29 @@ function JobRow({ job }) {
 
 export default function Pipeline() {
   const [filter, setFilter] = useState('all');
+  const [jobs, setJobs] = useState([]);
+  const [error, setError] = useState(null);
 
-  const counts = countByStatus(PIPELINE_JOBS);
+  const refresh = useCallback(async () => {
+    try {
+      setJobs(await fetchJobs());
+      setError(null);
+    } catch (e) {
+      setError(e.message || String(e));
+    }
+  }, []);
+
+  useEffect(() => {
+    refresh();
+    const id = setInterval(refresh, 2000);
+    return () => clearInterval(id);
+  }, [refresh]);
+
+  const counts = countByStatus(jobs);
 
   const visible = filter === 'all'
-    ? PIPELINE_JOBS
-    : PIPELINE_JOBS.filter(j => j.status === filter);
+    ? jobs
+    : jobs.filter(j => j.status === filter);
 
   return (
     <div className="space-y-6">
@@ -161,11 +189,23 @@ export default function Pipeline() {
           <h1 className="text-2xl font-bold text-slate-900">Pipeline</h1>
           <p className="text-slate-500 text-sm mt-0.5">Real-time job queue and processing status</p>
         </div>
-        <button className="flex items-center gap-2 px-4 py-2 border border-slate-200 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors">
+        <button
+          onClick={refresh}
+          className="flex items-center gap-2 px-4 py-2 border border-slate-200 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors"
+        >
           <RefreshCw size={14} />
           Refresh
         </button>
       </div>
+
+      {error && (
+        <div className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+          <AlertTriangle size={14} className="text-amber-600 flex-shrink-0 mt-0.5" />
+          <p className="text-xs text-amber-800 leading-relaxed">
+            Backend unreachable: {error}. Make sure the FastAPI server is running on port 8000.
+          </p>
+        </div>
+      )}
 
       {/* Status filter tabs */}
       <div className="flex items-center gap-1 bg-white border border-slate-100 rounded-xl p-1 w-fit">

@@ -1,15 +1,9 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Upload, X, CheckCircle, AlertTriangle, FileText, ChevronDown, GitMerge, Timer, Gauge } from 'lucide-react';
 import { DEVICE_FORMATS, MODALITY_CONFIG } from '../mockData';
 import { INGEST_MODALITIES, PARADIGMS } from '../constants';
 import { detectRecordingFormat, detectRecordingModality } from '../utils';
-
-const RECENT_INGESTIONS = [
-  { id: 'SL-2025-0485', subject: 'SUB-037', file: 'sub-037_task-driving_behavior.csv', format: 'Time-series CSV', modalities: ['EEG','EMG','BEH'], status: 'complete', time: '2d ago' },
-  { id: 'SL-2025-0489', subject: 'SUB-041', file: 'sub-041_task-rest_eeg.vhdr', format: 'BrainVision', modalities: ['EEG','ECG'], status: 'complete', time: '2m ago' },
-  { id: 'SL-2025-0488', subject: 'SUB-040', file: 'sub-040_task-motorimagery.bdf', format: 'BDF', modalities: ['EEG','EMG','ECG'], status: 'complete', time: '4h ago' },
-  { id: 'SL-2025-0487', subject: 'SUB-039', file: 'sub-039_task-nback.edf', format: 'EDF', modalities: ['EEG'], status: 'failed', time: '19h ago' },
-];
+import { fetchJobs, submitIngest } from '../../api';
 
 const SYNC_STEPS = [
   { label: 'Detect stream clocks', detail: 'EEG sample index + behavioral timestamp columns' },
@@ -25,12 +19,23 @@ export default function Ingest({ onNavigate }) {
   const [paradigm, setParadigm] = useState('');
   const [notes, setNotes] = useState('');
   const [submitted, setSubmitted] = useState(false);
+  const [submitError, setSubmitError] = useState(null);
+  const [recentIngestions, setRecentIngestions] = useState([]);
   const inputRef = useRef();
   const includesBehavior = files.some(file => file.modality === 'BEH') || paradigm === 'Driving Simulation';
   const includesPhysiology = files.some(file => ['EEG', 'EMG', 'ECG'].includes(file.modality));
 
+  useEffect(() => {
+    let cancelled = false;
+    fetchJobs()
+      .then(jobs => { if (!cancelled) setRecentIngestions(jobs.slice(0, 5)); })
+      .catch(() => { /* backend down — leave list empty */ });
+    return () => { cancelled = true; };
+  }, [submitted]);
+
   const addFiles = (incoming) => {
     const parsed = Array.from(incoming).map(f => ({
+      raw: f,
       name: f.name,
       size: (f.size / 1e6).toFixed(1),
       modality: detectRecordingModality(f.name),
@@ -45,17 +50,31 @@ export default function Ingest({ onNavigate }) {
     addFiles(e.dataTransfer.files);
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!files.length || !subjectId.trim()) return;
+    setSubmitError(null);
     setSubmitted(true);
-    setTimeout(() => {
-      setFiles([]);
-      setSubjectId('');
-      setParadigm('');
-      setNotes('');
+    try {
+      const uniqueModalities = Array.from(new Set(files.map(f => f.modality).filter(Boolean)));
+      await submitIngest({
+        files: files.map(f => f.raw),
+        subjectId: subjectId.trim(),
+        paradigm: paradigm || undefined,
+        notes: notes || undefined,
+        modalities: uniqueModalities,
+      });
+      setTimeout(() => {
+        setFiles([]);
+        setSubjectId('');
+        setParadigm('');
+        setNotes('');
+        setSubmitted(false);
+        onNavigate('pipeline');
+      }, 900);
+    } catch (err) {
+      setSubmitError(err.message || String(err));
       setSubmitted(false);
-      onNavigate('pipeline');
-    }, 1800);
+    }
   };
 
   return (
@@ -191,6 +210,13 @@ export default function Ingest({ onNavigate }) {
             ready={includesBehavior && includesPhysiology}
           />
 
+          {submitError && (
+            <div className="flex items-start gap-2 p-3 bg-red-50 border border-red-200 rounded-lg">
+              <AlertTriangle size={14} className="text-red-500 flex-shrink-0 mt-0.5" />
+              <p className="text-xs text-red-700 leading-relaxed">{submitError}</p>
+            </div>
+          )}
+
           {/* Submit */}
           <button
             onClick={handleSubmit}
@@ -226,17 +252,27 @@ export default function Ingest({ onNavigate }) {
               <h3 className="font-semibold text-slate-900">Recent Ingestions</h3>
             </div>
             <div className="divide-y divide-slate-50">
-              {RECENT_INGESTIONS.map(r => (
+              {recentIngestions.length === 0 ? (
+                <div className="px-5 py-6 text-center text-xs text-slate-400">
+                  No ingestions yet — upload a recording to get started.
+                </div>
+              ) : recentIngestions.map(r => (
                 <div key={r.id} className="px-5 py-3 flex items-center gap-3">
                   {r.status === 'complete'
                     ? <CheckCircle size={14} className="text-emerald-500 flex-shrink-0" />
-                    : <AlertTriangle size={14} className="text-red-400 flex-shrink-0" />
+                    : r.status === 'failed'
+                    ? <AlertTriangle size={14} className="text-red-400 flex-shrink-0" />
+                    : <Timer size={14} className="text-teal-500 flex-shrink-0" />
                   }
                   <div className="flex-1 min-w-0">
                     <p className="text-xs font-semibold text-slate-900 truncate">{r.subject}</p>
-                    <p className="text-[10px] text-slate-400 truncate font-mono">{r.id} · {r.time}</p>
+                    <p className="text-[10px] text-slate-400 truncate font-mono">{r.id} · {r.format}</p>
                   </div>
-                  <span className={`text-[10px] font-bold uppercase ${r.status === 'complete' ? 'text-emerald-600' : 'text-red-500'}`}>
+                  <span className={`text-[10px] font-bold uppercase ${
+                    r.status === 'complete' ? 'text-emerald-600' :
+                    r.status === 'failed' ? 'text-red-500' :
+                    'text-teal-600'
+                  }`}>
                     {r.status}
                   </span>
                 </div>
