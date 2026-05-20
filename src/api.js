@@ -22,14 +22,16 @@ function adaptJob(job) {
     downloadUrl: job.download_url,
     outputPath: job.output_path,
     error: job.error,
-    syncMeta: job.sync_meta ? {
-      method: job.sync_meta.method,
-      offsetS: job.sync_meta.offset_s,
-      driftRate: job.sync_meta.drift_rate,
-      matchedEventCount: job.sync_meta.matched_event_count,
-      rmsResidualS: job.sync_meta.rms_residual_s,
-      warnings: job.sync_meta.warnings || [],
-    } : null,
+    syncMetas: (job.sync_metas || []).map(m => ({
+      fileName: m.file_name,
+      method: m.method,
+      offsetS: m.offset_s,
+      driftRate: m.drift_rate,
+      matchedEventCount: m.matched_event_count,
+      rmsResidualS: m.rms_residual_s,
+      dedupedEventCount: m.deduped_event_count ?? 0,
+      warnings: m.warnings || [],
+    })),
   };
 }
 

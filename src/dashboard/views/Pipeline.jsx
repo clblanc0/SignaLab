@@ -14,14 +14,15 @@ function SyncPanel({ meta }) {
   }[meta.method] ?? meta.method;
   return (
     <div className="mt-3 p-3 bg-white border border-brand-violet/20 rounded-lg">
-      <div className="flex items-center gap-2 mb-2">
+      <div className="flex items-center gap-2 mb-2 flex-wrap">
         <GitMerge size={13} className="text-brand-violet" />
         <span className="text-xs font-semibold text-slate-700 uppercase tracking-wider">
-          Cross-stream sync
+          Sync
         </span>
-        <span className="text-[10px] font-mono text-slate-400">{methodLabel}</span>
+        <span className="text-[10px] font-mono text-slate-600">{meta.fileName}</span>
+        <span className="text-[10px] font-mono text-slate-400">· {methodLabel}</span>
       </div>
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
         <SyncMetric label="Offset" value={`${meta.offsetS.toFixed(3)} s`} />
         <SyncMetric label="Drift" value={`${driftMsPerSec.toFixed(2)} ms/s`} />
         <SyncMetric label="Anchors" value={String(meta.matchedEventCount)} />
@@ -29,6 +30,7 @@ function SyncPanel({ meta }) {
           label="RMS residual"
           value={meta.rmsResidualS != null ? `${(meta.rmsResidualS * 1000).toFixed(2)} ms` : '—'}
         />
+        <SyncMetric label="Deduped" value={String(meta.dedupedEventCount ?? 0)} />
       </div>
       {meta.warnings?.length > 0 && (
         <div className="mt-2 space-y-1">
@@ -182,7 +184,7 @@ function JobRow({ job }) {
         <div className="px-5 py-4 bg-slate-50 border-t border-slate-100">
           <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Pipeline Stages</p>
           <StagePipeline stages={job.stages} />
-          {job.syncMeta && <SyncPanel meta={job.syncMeta} />}
+          {job.syncMetas?.map((m, i) => <SyncPanel key={i} meta={m} />)}
           {job.error && (
             <div className="mt-3 flex items-start gap-2 p-3 bg-red-50 border border-red-100 rounded-lg">
               <XCircle size={14} className="text-red-500 flex-shrink-0 mt-0.5" />

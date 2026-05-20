@@ -24,11 +24,13 @@ class Stage(BaseModel):
 
 
 class SyncMeta(BaseModel):
+    file_name: str
     method: str  # "linear" | "constant" | "no_sync"
     offset_s: float
     drift_rate: float  # slope - 1 (dimensionless)
     matched_event_count: int
     rms_residual_s: Optional[float] = None
+    deduped_event_count: int = 0
     warnings: list[str] = Field(default_factory=list)
 
 
@@ -48,7 +50,7 @@ class Job(BaseModel):
     output_path: Optional[str] = None
     download_url: Optional[str] = None
     error: Optional[str] = None
-    sync_meta: Optional[SyncMeta] = None
+    sync_metas: list[SyncMeta] = Field(default_factory=list)
 
 
 def _now_iso() -> str:
@@ -147,7 +149,7 @@ class JobStore:
 
     def attach_sync_meta(self, job_id: str, meta: SyncMeta) -> None:
         with self._lock:
-            self._jobs[job_id].sync_meta = meta
+            self._jobs[job_id].sync_metas.append(meta)
 
     def mark_complete(self, job_id: str, *, output_path: str, download_url: str) -> None:
         with self._lock:

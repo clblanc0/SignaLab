@@ -44,23 +44,55 @@ STAGE_NAMES = [
 
 EEG_EXTS = {".edf"}  # Phase 2 still EDF-only on the EEG side
 EVENT_EXTS = {".csv", ".tsv"}
+DEDUPE_TOLERANCE_S = 0.05  # ±50 ms — within sample quantization for typical EEG
 
 
 def _safe_bids_id(value: str) -> str:
     return "".join(c for c in value if c.isalnum())
 
 
-def _classify(file_paths: list[Path]) -> tuple[Optional[Path], Optional[Path]]:
-    """Pick the first EEG file and the first behavioral file from the upload."""
+def _classify(file_paths: list[Path]) -> tuple[Optional[Path], list[Path]]:
+    """Pick the first EEG file and ALL behavioral files from the upload."""
     eeg: Optional[Path] = None
-    behavior: Optional[Path] = None
+    behaviors: list[Path] = []
     for p in file_paths:
         suffix = p.suffix.lower()
         if suffix in EEG_EXTS and eeg is None:
             eeg = p
-        elif suffix in EVENT_EXTS and behavior is None:
-            behavior = p
-    return eeg, behavior
+        elif suffix in EVENT_EXTS:
+            behaviors.append(p)
+    return eeg, behaviors
+
+
+def _dedupe_against_existing(
+    new_events: list[BehavioralEvent],
+    existing_times: list[float],
+    existing_labels: list[str],
+    tolerance_s: float = DEDUPE_TOLERANCE_S,
+) -> tuple[list[BehavioralEvent], int]:
+    """Drop new events that collide with an existing annotation (same normalized
+    label, within ±tolerance_s on the EEG clock). Returns (kept, dropped_count).
+
+    Rationale: when EEG triggers and a CSV both record the same instant, we
+    prefer the EEG's timestamp (authoritative clock) and the CSV's row would
+    be a literal duplicate on `events.tsv`. Without this pass downstream BIDS
+    consumers would see e.g. two `stim_onset` rows 0.4 ms apart.
+    """
+    from .sync import _norm
+
+    by_label: dict[str, list[float]] = {}
+    for t, lbl in zip(existing_times, existing_labels):
+        by_label.setdefault(_norm(lbl), []).append(t)
+
+    kept: list[BehavioralEvent] = []
+    dropped = 0
+    for ev in new_events:
+        bucket = by_label.get(_norm(ev.label), [])
+        if any(abs(t - ev.onset) <= tolerance_s for t in bucket):
+            dropped += 1
+            continue
+        kept.append(ev)
+    return kept, dropped
 
 
 def _append_annotations(raw: mne.io.BaseRaw, events: list[BehavioralEvent]) -> None:
@@ -106,7 +138,7 @@ def run_pipeline(
 
         # 2. Format Parsing — open EEG with MNE.
         t = store.start_stage(job_id, "Format Parsing")
-        eeg_path, behavior_path = _classify(file_paths)
+        eeg_path, behavior_paths = _classify(file_paths)
         if eeg_path is None:
             raise ValueError(
                 f"No EEG file found; supported: {sorted(EEG_EXTS)}"
@@ -121,38 +153,55 @@ def run_pipeline(
         log.info(
             "Streams: eeg=%s, behavior=%s",
             eeg_path.name,
-            behavior_path.name if behavior_path else "(none)",
+            ",".join(p.name for p in behavior_paths) if behavior_paths else "(none)",
         )
         store.finish_stage(job_id, "Stream Detection", t)
 
-        # 4. Clock Sync — match labels, fit drift. Skipped if no behavioral file.
-        if behavior_path is None:
+        # 4-5. Clock Sync + Event Merge — once per behavioral file. Skipped if none.
+        if not behavior_paths:
             store.skip_stage(job_id, "Clock Sync")
             store.skip_stage(job_id, "Event Merge")
-            synced_events: list[BehavioralEvent] = []
         else:
-            t = store.start_stage(job_id, "Clock Sync")
-            csv_events = parse_events_csv(behavior_path)
-            eeg_times = list(raw.annotations.onset) if raw.annotations else []
-            eeg_labels = list(raw.annotations.description) if raw.annotations else []
-            result, synced_events = align_events(eeg_times, eeg_labels, csv_events)
-            store.attach_sync_meta(
-                job_id,
-                SyncMeta(
-                    method=result.method,
-                    offset_s=result.offset_s,
-                    drift_rate=result.drift_rate,
-                    matched_event_count=result.matched_event_count,
-                    rms_residual_s=result.rms_residual_s,
-                    warnings=result.warnings,
-                ),
-            )
-            store.finish_stage(job_id, "Clock Sync", t)
+            sync_t = store.start_stage(job_id, "Clock Sync")
+            merge_t: Optional[float] = None
+            for behavior_path in behavior_paths:
+                csv_events = parse_events_csv(behavior_path)
+                eeg_times = list(raw.annotations.onset) if raw.annotations else []
+                eeg_labels = list(raw.annotations.description) if raw.annotations else []
+                result, synced_events = align_events(eeg_times, eeg_labels, csv_events)
 
-            # 5. Event Merge — attach synced events to raw.
-            t = store.start_stage(job_id, "Event Merge")
-            _append_annotations(raw, synced_events)
-            store.finish_stage(job_id, "Event Merge", t)
+                # Dedupe collisions with whatever annotations are now on raw
+                # (EEG-native plus any earlier behavioral files we already merged).
+                if result.method != "no_sync":
+                    synced_events, dropped = _dedupe_against_existing(
+                        synced_events, eeg_times, eeg_labels
+                    )
+                else:
+                    dropped = 0
+
+                store.attach_sync_meta(
+                    job_id,
+                    SyncMeta(
+                        file_name=behavior_path.name,
+                        method=result.method,
+                        offset_s=result.offset_s,
+                        drift_rate=result.drift_rate,
+                        matched_event_count=result.matched_event_count,
+                        rms_residual_s=result.rms_residual_s,
+                        deduped_event_count=dropped,
+                        warnings=result.warnings,
+                    ),
+                )
+
+                # Event Merge runs once across all files; start its timer on the
+                # first iteration so the stage card shows total merge time.
+                if merge_t is None:
+                    store.finish_stage(job_id, "Clock Sync", sync_t)
+                    merge_t = store.start_stage(job_id, "Event Merge")
+                _append_annotations(raw, synced_events)
+
+            assert merge_t is not None
+            store.finish_stage(job_id, "Event Merge", merge_t)
 
         # 6. BIDS Standardization.
         t = store.start_stage(job_id, "BIDS Standardization")

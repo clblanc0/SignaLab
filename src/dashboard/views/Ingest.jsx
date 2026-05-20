@@ -22,8 +22,6 @@ export default function Ingest({ onNavigate }) {
   const [submitError, setSubmitError] = useState(null);
   const [recentIngestions, setRecentIngestions] = useState([]);
   const inputRef = useRef();
-  const includesBehavior = files.some(file => file.modality === 'BEH') || paradigm === 'Driving Simulation';
-  const includesPhysiology = files.some(file => ['EEG', 'EMG', 'ECG'].includes(file.modality));
 
   useEffect(() => {
     let cancelled = false;
@@ -205,10 +203,7 @@ export default function Ingest({ onNavigate }) {
             </div>
           </div>
 
-          <SyncPreview
-            active={includesBehavior}
-            ready={includesBehavior && includesPhysiology}
-          />
+          <SyncPreview files={files} />
 
           {submitError && (
             <div className="flex items-start gap-2 p-3 bg-red-50 border border-red-200 rounded-lg">
@@ -312,7 +307,34 @@ function FormatSelect({ value, onChange }) {
   );
 }
 
-function SyncPreview({ active, ready }) {
+// Format families that the backend recognizes as physiology vs behavioral.
+// (Phase 2.1: physiology = EDF only; broaden as new parsers land in Phase 3.)
+const PHYSIO_FORMATS = new Set(['edf']);
+const BEHAVIOR_FORMATS = new Set(['csv', 'tsv', 'timeseries']);
+
+function SyncPreview({ files }) {
+  const physio = files.filter(f => PHYSIO_FORMATS.has((f.format || '').toLowerCase()));
+  const behavior = files.filter(f => BEHAVIOR_FORMATS.has((f.format || '').toLowerCase()));
+  const active = physio.length > 0 || behavior.length > 0;
+  const ready = physio.length >= 1 && behavior.length >= 1;
+  const needsPhysio = active && physio.length === 0;
+  const needsBehavior = active && behavior.length === 0;
+
+  let badgeText, badgeClass;
+  if (ready) {
+    badgeText = `${physio.length}+${behavior.length} ready to sync`;
+    badgeClass = 'bg-emerald-50 text-emerald-700 border-emerald-200';
+  } else if (needsPhysio) {
+    badgeText = 'Add a physiology file (EDF)';
+    badgeClass = 'bg-amber-50 text-amber-700 border-amber-200';
+  } else if (needsBehavior) {
+    badgeText = 'EEG-only — sync stages will skip';
+    badgeClass = 'bg-slate-50 text-slate-600 border-slate-200';
+  } else {
+    badgeText = 'Available';
+    badgeClass = 'bg-slate-50 text-slate-500 border-slate-200';
+  }
+
   return (
     <div className={`bg-white rounded-2xl border p-5 ${
       active ? 'border-brand-violet/25 shadow-glowViolet' : 'border-slate-100'
@@ -327,25 +349,19 @@ function SyncPreview({ active, ready }) {
           <div>
             <h3 className="font-semibold text-slate-900">Post-experiment time-series sync</h3>
             <p className="text-sm text-slate-500 mt-0.5">
-              Pair task events, response logs, kinematics, simulator data, or wearable streams with EEG, EMG, or ECG after collection.
+              Pair behavioral logs, response files, or sensor streams with the EEG/physiology recording. Alignment uses shared event labels.
             </p>
           </div>
         </div>
-        <span className={`text-xs font-bold px-2 py-1 rounded border ${
-          ready
-            ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-            : active
-            ? 'bg-amber-50 text-amber-700 border-amber-200'
-            : 'bg-slate-50 text-slate-500 border-slate-200'
-        }`}>
-          {ready ? 'Ready to sync' : active ? 'Needs physiology stream' : 'Available'}
+        <span className={`text-xs font-bold px-2 py-1 rounded border whitespace-nowrap ${badgeClass}`}>
+          {badgeText}
         </span>
       </div>
 
       <div className="grid md:grid-cols-3 gap-3 mb-4">
-        <SyncMetric icon={Timer} label="EEG stream" value="250-1000 Hz" />
-        <SyncMetric icon={Gauge} label="Behavior stream" value="events or sampled data" />
-        <SyncMetric icon={GitMerge} label="Alignment basis" value="timestamps + events" />
+        <DetectedStreamCard icon={Timer} label="Physiology" files={physio} placeholder="No EEG file selected" />
+        <DetectedStreamCard icon={Gauge} label="Behavioral" files={behavior} placeholder="No CSV/TSV selected" />
+        <SyncMetric icon={GitMerge} label="Alignment basis" value="Shared event labels" />
       </div>
 
       <div className="grid sm:grid-cols-2 gap-2">
@@ -363,6 +379,33 @@ function SyncPreview({ active, ready }) {
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+function DetectedStreamCard({ icon: Icon, label, files, placeholder }) {
+  const active = files.length > 0;
+  return (
+    <div className={`rounded-xl border px-3 py-2.5 ${active ? 'border-brand-violet/30 bg-brand-violet/5' : 'border-slate-100'}`}>
+      <div className={`flex items-center gap-2 mb-1 ${active ? 'text-brand-violet' : 'text-slate-400'}`}>
+        <Icon size={13} />
+        <span className="text-[10px] font-semibold uppercase tracking-wider">{label}</span>
+        {active && (
+          <span className="ml-auto text-[10px] font-mono font-bold">{files.length}</span>
+        )}
+      </div>
+      {active ? (
+        <ul className="space-y-0.5">
+          {files.slice(0, 3).map((f, i) => (
+            <li key={i} className="text-[11px] text-slate-700 truncate font-mono" title={f.name}>{f.name}</li>
+          ))}
+          {files.length > 3 && (
+            <li className="text-[10px] text-slate-400">+{files.length - 3} more</li>
+          )}
+        </ul>
+      ) : (
+        <p className="text-xs text-slate-400">{placeholder}</p>
+      )}
     </div>
   );
 }
