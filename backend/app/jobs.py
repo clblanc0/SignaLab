@@ -23,6 +23,15 @@ class Stage(BaseModel):
     duration: Optional[float] = None
 
 
+class SyncMeta(BaseModel):
+    method: str  # "linear" | "constant" | "no_sync"
+    offset_s: float
+    drift_rate: float  # slope - 1 (dimensionless)
+    matched_event_count: int
+    rms_residual_s: Optional[float] = None
+    warnings: list[str] = Field(default_factory=list)
+
+
 class Job(BaseModel):
     id: str
     subject_id: str
@@ -39,6 +48,7 @@ class Job(BaseModel):
     output_path: Optional[str] = None
     download_url: Optional[str] = None
     error: Optional[str] = None
+    sync_meta: Optional[SyncMeta] = None
 
 
 def _now_iso() -> str:
@@ -117,14 +127,27 @@ class JobStore:
         duration = round(time.monotonic() - start_t, 2)
         with self._lock:
             job = self._jobs[job_id]
-            done = 0
             for stage in job.stages:
                 if stage.name == stage_name:
                     stage.status = "done" if ok else "failed"
                     stage.duration = duration
-                if stage.status == "done":
-                    done += 1
+                    break
+            done = sum(1 for s in job.stages if s.status in ("done", "skip"))
             job.progress = int(100 * done / len(job.stages)) if job.stages else 0
+
+    def skip_stage(self, job_id: str, stage_name: str) -> None:
+        with self._lock:
+            job = self._jobs[job_id]
+            for stage in job.stages:
+                if stage.name == stage_name:
+                    stage.status = "skip"
+                    break
+            done = sum(1 for s in job.stages if s.status in ("done", "skip"))
+            job.progress = int(100 * done / len(job.stages)) if job.stages else 0
+
+    def attach_sync_meta(self, job_id: str, meta: SyncMeta) -> None:
+        with self._lock:
+            self._jobs[job_id].sync_meta = meta
 
     def mark_complete(self, job_id: str, *, output_path: str, download_url: str) -> None:
         with self._lock:

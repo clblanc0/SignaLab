@@ -1,8 +1,18 @@
-"""EDF → BIDS-EEG conversion pipeline.
+"""Standardization pipeline.
 
-Phase 1 is intentionally narrow: one input format (EDF), one output format
-(BIDS-EEG via mne-bids), packaged as a zip for download. Each stage updates
-the JobStore so the frontend can poll progress.
+Phase 2 extends the original 4-stage EDF→BIDS pipeline with three new stages
+that handle paired EEG + behavioral CSV uploads:
+
+  Ingestion → Format Parsing → Stream Detection → Clock Sync →
+  Event Merge → BIDS Standardization → Packaging
+
+When the user uploads only an EEG file, Clock Sync and Event Merge skip
+cleanly (their stage cards show as "skipped" in the UI) and the pipeline
+runs identically to Phase 1.
+
+When both files are present, Clock Sync runs the alignment algorithm
+(see app/sync.py) and Event Merge attaches the synced events to the MNE
+raw object as annotations — mne-bids then emits them in events.tsv.
 """
 
 from __future__ import annotations
@@ -16,16 +26,64 @@ from typing import Optional
 import mne
 from mne_bids import BIDSPath, write_raw_bids
 
-from .jobs import store
+from .csv_events import BehavioralEvent, parse_events_csv
+from .jobs import SyncMeta, store
+from .sync import align_events
 
 log = logging.getLogger(__name__)
 
-STAGE_NAMES = ["Ingestion", "Format Parsing", "BIDS Standardization", "Packaging"]
+STAGE_NAMES = [
+    "Ingestion",
+    "Format Parsing",
+    "Stream Detection",
+    "Clock Sync",
+    "Event Merge",
+    "BIDS Standardization",
+    "Packaging",
+]
+
+EEG_EXTS = {".edf"}  # Phase 2 still EDF-only on the EEG side
+EVENT_EXTS = {".csv", ".tsv"}
 
 
 def _safe_bids_id(value: str) -> str:
-    """BIDS labels must be alphanumeric. Strip everything else."""
     return "".join(c for c in value if c.isalnum())
+
+
+def _classify(file_paths: list[Path]) -> tuple[Optional[Path], Optional[Path]]:
+    """Pick the first EEG file and the first behavioral file from the upload."""
+    eeg: Optional[Path] = None
+    behavior: Optional[Path] = None
+    for p in file_paths:
+        suffix = p.suffix.lower()
+        if suffix in EEG_EXTS and eeg is None:
+            eeg = p
+        elif suffix in EVENT_EXTS and behavior is None:
+            behavior = p
+    return eeg, behavior
+
+
+def _append_annotations(raw: mne.io.BaseRaw, events: list[BehavioralEvent]) -> None:
+    """Add behavioral events as MNE annotations so write_raw_bids emits them.
+
+    MNE's EDF reader stamps annotations with `orig_time` (defaulting to the
+    1985 epoch if the recording header omits it). New annotations default to
+    `orig_time=None`, which prevents concatenation — so we mirror whatever
+    the existing annotations use.
+    """
+    if not events:
+        return
+    orig_time = raw.annotations.orig_time if raw.annotations is not None else None
+    new = mne.Annotations(
+        onset=[e.onset for e in events],
+        duration=[max(e.duration, 0.0) for e in events],
+        description=[e.label for e in events],
+        orig_time=orig_time,
+    )
+    raw.set_annotations(
+        (raw.annotations if raw.annotations is not None else mne.Annotations([], [], [], orig_time=orig_time))
+        + new
+    )
 
 
 def run_pipeline(
@@ -37,27 +95,66 @@ def run_pipeline(
 ) -> None:
     store.mark_running(job_id)
     try:
-        # 1. Ingestion — confirm files are on disk and recognized.
+        # 1. Ingestion — confirm files on disk.
         t = store.start_stage(job_id, "Ingestion")
         if not file_paths:
             raise ValueError("No input files provided")
-        primary = file_paths[0]
-        if not primary.exists():
-            raise FileNotFoundError(primary)
-        if primary.suffix.lower() != ".edf":
-            raise ValueError(
-                f"Phase 1 only supports .edf input; got {primary.suffix}"
-            )
+        for p in file_paths:
+            if not p.exists():
+                raise FileNotFoundError(p)
         store.finish_stage(job_id, "Ingestion", t)
 
-        # 2. Format Parsing — open with MNE.
+        # 2. Format Parsing — open EEG with MNE.
         t = store.start_stage(job_id, "Format Parsing")
-        raw = mne.io.read_raw_edf(str(primary), preload=False, verbose="WARNING")
+        eeg_path, behavior_path = _classify(file_paths)
+        if eeg_path is None:
+            raise ValueError(
+                f"No EEG file found; supported: {sorted(EEG_EXTS)}"
+            )
+        raw = mne.io.read_raw_edf(str(eeg_path), preload=False, verbose="WARNING")
         if raw.info.get("line_freq") is None:
             raw.info["line_freq"] = 60.0
         store.finish_stage(job_id, "Format Parsing", t)
 
-        # 3. BIDS Standardization — mne-bids writes the canonical folder.
+        # 3. Stream Detection — figure out roles.
+        t = store.start_stage(job_id, "Stream Detection")
+        log.info(
+            "Streams: eeg=%s, behavior=%s",
+            eeg_path.name,
+            behavior_path.name if behavior_path else "(none)",
+        )
+        store.finish_stage(job_id, "Stream Detection", t)
+
+        # 4. Clock Sync — match labels, fit drift. Skipped if no behavioral file.
+        if behavior_path is None:
+            store.skip_stage(job_id, "Clock Sync")
+            store.skip_stage(job_id, "Event Merge")
+            synced_events: list[BehavioralEvent] = []
+        else:
+            t = store.start_stage(job_id, "Clock Sync")
+            csv_events = parse_events_csv(behavior_path)
+            eeg_times = list(raw.annotations.onset) if raw.annotations else []
+            eeg_labels = list(raw.annotations.description) if raw.annotations else []
+            result, synced_events = align_events(eeg_times, eeg_labels, csv_events)
+            store.attach_sync_meta(
+                job_id,
+                SyncMeta(
+                    method=result.method,
+                    offset_s=result.offset_s,
+                    drift_rate=result.drift_rate,
+                    matched_event_count=result.matched_event_count,
+                    rms_residual_s=result.rms_residual_s,
+                    warnings=result.warnings,
+                ),
+            )
+            store.finish_stage(job_id, "Clock Sync", t)
+
+            # 5. Event Merge — attach synced events to raw.
+            t = store.start_stage(job_id, "Event Merge")
+            _append_annotations(raw, synced_events)
+            store.finish_stage(job_id, "Event Merge", t)
+
+        # 6. BIDS Standardization.
         t = store.start_stage(job_id, "BIDS Standardization")
         bids_root = output_dir / f"bids_{job_id}"
         if bids_root.exists():
@@ -72,7 +169,7 @@ def run_pipeline(
         write_raw_bids(raw, bids_path, overwrite=True, verbose=False)
         store.finish_stage(job_id, "BIDS Standardization", t)
 
-        # 4. Packaging — zip the BIDS dataset for download.
+        # 7. Packaging — zip for download.
         t = store.start_stage(job_id, "Packaging")
         zip_path = output_dir / f"{job_id}_bids.zip"
         if zip_path.exists():

@@ -1,9 +1,57 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { CheckCircle, XCircle, Clock, AlertTriangle, ChevronDown, ChevronUp, RefreshCw, Download } from 'lucide-react';
+import { CheckCircle, XCircle, Clock, AlertTriangle, ChevronDown, ChevronUp, RefreshCw, Download, GitMerge } from 'lucide-react';
 import { MODALITY_CONFIG } from '../mockData';
 import { PIPELINE_STATUS_FILTERS } from '../constants';
 import { countByStatus, formatElapsedTime } from '../utils';
 import { fetchJobs, downloadUrl } from '../../api';
+
+function SyncPanel({ meta }) {
+  const driftMsPerSec = meta.driftRate * 1000;
+  const methodLabel = {
+    linear: 'Linear fit (offset + drift)',
+    constant: 'Constant offset only',
+    no_sync: 'No alignment — events as-is',
+  }[meta.method] ?? meta.method;
+  return (
+    <div className="mt-3 p-3 bg-white border border-brand-violet/20 rounded-lg">
+      <div className="flex items-center gap-2 mb-2">
+        <GitMerge size={13} className="text-brand-violet" />
+        <span className="text-xs font-semibold text-slate-700 uppercase tracking-wider">
+          Cross-stream sync
+        </span>
+        <span className="text-[10px] font-mono text-slate-400">{methodLabel}</span>
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        <SyncMetric label="Offset" value={`${meta.offsetS.toFixed(3)} s`} />
+        <SyncMetric label="Drift" value={`${driftMsPerSec.toFixed(2)} ms/s`} />
+        <SyncMetric label="Anchors" value={String(meta.matchedEventCount)} />
+        <SyncMetric
+          label="RMS residual"
+          value={meta.rmsResidualS != null ? `${(meta.rmsResidualS * 1000).toFixed(2)} ms` : '—'}
+        />
+      </div>
+      {meta.warnings?.length > 0 && (
+        <div className="mt-2 space-y-1">
+          {meta.warnings.map((w, i) => (
+            <div key={i} className="flex items-start gap-1.5 text-[10px] text-amber-700">
+              <AlertTriangle size={11} className="flex-shrink-0 mt-0.5" />
+              <span className="leading-snug">{w}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SyncMetric({ label, value }) {
+  return (
+    <div>
+      <p className="text-[9px] font-semibold uppercase tracking-wider text-slate-400">{label}</p>
+      <p className="text-xs font-mono font-bold text-slate-800 mt-0.5">{value}</p>
+    </div>
+  );
+}
 
 function statusBadge(status) {
   const map = {
@@ -134,6 +182,7 @@ function JobRow({ job }) {
         <div className="px-5 py-4 bg-slate-50 border-t border-slate-100">
           <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Pipeline Stages</p>
           <StagePipeline stages={job.stages} />
+          {job.syncMeta && <SyncPanel meta={job.syncMeta} />}
           {job.error && (
             <div className="mt-3 flex items-start gap-2 p-3 bg-red-50 border border-red-100 rounded-lg">
               <XCircle size={14} className="text-red-500 flex-shrink-0 mt-0.5" />
