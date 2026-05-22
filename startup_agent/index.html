@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Signalab Relationship Agent</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">S</div>
+        <div>
+          <strong>Signalab</strong>
+          <span>Relationship Agent</span>
+        </div>
+      </div>
+      <nav class="nav" aria-label="Main navigation">
+        <button class="nav-item active" data-view="dashboard" type="button">Dashboard</button>
+        <button class="nav-item" data-view="agents" type="button">Agents</button>
+        <button class="nav-item" data-view="targets" type="button">Targets</button>
+        <button class="nav-item" data-view="outreach" type="button">Outreach</button>
+        <button class="nav-item" data-view="learning" type="button">Learning</button>
+      </nav>
+      <div class="guardrail">
+        <strong>Guardrail</strong>
+        <p>Drafts are meant for manual review. Do not automate LinkedIn actions or scrape restricted pages.</p>
+      </div>
+    </aside>
+
+    <main class="app">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Customer discovery and partnerships</p>
+          <h1>Find the right people, understand the space, and prepare thoughtful outreach.</h1>
+        </div>
+        <button class="primary-button" id="seedDemo" type="button">Load starter data</button>
+      </header>
+
+      <section class="view active" id="dashboard">
+        <div class="metrics">
+          <div class="metric">
+            <span>Targets</span>
+            <strong id="targetCount">0</strong>
+          </div>
+          <div class="metric">
+            <span>High priority</span>
+            <strong id="priorityCount">0</strong>
+          </div>
+          <div class="metric">
+            <span>Drafts ready</span>
+            <strong id="draftCount">0</strong>
+          </div>
+          <div class="metric">
+            <span>Learning notes</span>
+            <strong id="noteCount">0</strong>
+          </div>
+          <div class="metric">
+            <span>Agent runs</span>
+            <strong id="agentRunCount">0</strong>
+          </div>
+        </div>
+
+        <div class="workspace-grid">
+          <section class="panel">
+            <div class="panel-heading">
+              <h2>Add discovery target</h2>
+              <span>People, partners, advisors, customers</span>
+            </div>
+            <form id="targetForm" class="form">
+              <label>
+                Name
+                <input name="name" required placeholder="Dr. Maya Chen">
+              </label>
+              <label>
+                Organization
+                <input name="organization" placeholder="Northstar Health">
+              </label>
+              <label>
+                Role
+                <input name="role" placeholder="VP Innovation">
+              </label>
+              <div class="split">
+                <label>
+                  Sector
+                  <input name="sector" required placeholder="Digital health">
+                </label>
+                <label>
+                  Channel
+                  <select name="channel">
+                    <option>Email</option>
+                    <option>LinkedIn manual</option>
+                    <option>Event intro</option>
+                    <option>Warm referral</option>
+                  </select>
+                </label>
+              </div>
+              <label>
+                Why they matter
+                <textarea name="reason" required placeholder="Runs pilots with early-stage analytics tools for clinical ops teams."></textarea>
+              </label>
+              <div class="split three">
+                <label>
+                  Fit
+                  <input name="fit" type="number" min="1" max="5" value="4">
+                </label>
+                <label>
+                  Access
+                  <input name="access" type="number" min="1" max="5" value="3">
+                </label>
+                <label>
+                  Urgency
+                  <input name="urgency" type="number" min="1" max="5" value="3">
+                </label>
+              </div>
+              <button class="primary-button" type="submit">Add target</button>
+            </form>
+          </section>
+
+          <section class="panel">
+            <div class="panel-heading">
+              <h2>Today’s focus</h2>
+              <span>Highest leverage next actions</span>
+            </div>
+            <div id="focusList" class="focus-list empty-state">Add targets to see prioritized actions.</div>
+          </section>
+        </div>
+      </section>
+
+      <section class="view" id="agents">
+        <div class="section-header">
+          <div>
+            <h2>Agent command center</h2>
+            <p>Run focused discovery missions that create targets, outreach drafts, learning notes, and follow-up tasks.</p>
+          </div>
+          <button class="secondary-button" id="runDefaultMission" type="button">Run suggested mission</button>
+        </div>
+
+        <div class="workspace-grid">
+          <section class="panel">
+            <div class="panel-heading">
+              <h2>Mission brief</h2>
+              <span>Describe the sector, persona, and outcome you want</span>
+            </div>
+            <form id="missionForm" class="form">
+              <label>
+                Sector
+                <input name="sector" required placeholder="Digital health">
+              </label>
+              <label>
+                Target persona
+                <input name="persona" required placeholder="Innovation leaders at regional health systems">
+              </label>
+              <label>
+                Goal
+                <textarea name="goal" required placeholder="Find customer discovery conversations and partnership paths for an AI workflow product."></textarea>
+              </label>
+              <label>
+                Known constraints
+                <textarea name="constraints" placeholder="Avoid automated LinkedIn actions. Prioritize warm intros and operators with buying authority."></textarea>
+              </label>
+              <button class="primary-button" type="submit">Run agents</button>
+            </form>
+          </section>
+
+          <section class="panel">
+            <div class="panel-heading">
+              <h2>Agent roster</h2>
+              <span>Each agent owns a narrow job</span>
+            </div>
+            <div id="agentRoster" class="agent-roster"></div>
+          </section>
+        </div>
+
+        <div class="section-header lower">
+          <div>
+            <h2>Run history</h2>
+            <p>Outputs are saved locally and can be promoted into targets, drafts, and notes.</p>
+          </div>
+        </div>
+        <div id="runHistory" class="run-history empty-state">Run a mission to see agent outputs.</div>
+      </section>
+
+      <section class="view" id="targets">
+        <div class="section-header">
+          <div>
+            <h2>Discovery targets</h2>
+            <p>Scored by strategic fit, access path, urgency, and available context.</p>
+          </div>
+          <input id="targetSearch" class="search" placeholder="Search targets">
+        </div>
+        <div id="targetList" class="card-grid"></div>
+      </section>
+
+      <section class="view" id="outreach">
+        <div class="section-header">
+          <div>
+            <h2>Outreach drafts</h2>
+            <p>Manual-send drafts for email, LinkedIn notes, referrals, and event follow-ups.</p>
+          </div>
+          <button class="secondary-button" id="generateDrafts" type="button">Generate drafts</button>
+        </div>
+        <div id="draftList" class="draft-list empty-state">Add targets, then generate drafts.</div>
+      </section>
+
+      <section class="view" id="learning">
+        <div class="workspace-grid">
+          <section class="panel">
+            <div class="panel-heading">
+              <h2>Learning brief builder</h2>
+              <span>Capture market signals and open questions</span>
+            </div>
+            <form id="noteForm" class="form">
+              <label>
+                Sector
+                <input name="sector" required placeholder="Climate logistics">
+              </label>
+              <label>
+                Signal or insight
+                <textarea name="insight" required placeholder="Fleet operators are asking for route-level emissions reporting before buying optimization tools."></textarea>
+              </label>
+              <label>
+                Source
+                <input name="source" placeholder="Podcast, article, customer call, report">
+              </label>
+              <button class="primary-button" type="submit">Add learning note</button>
+            </form>
+          </section>
+          <section class="panel">
+            <div class="panel-heading">
+              <h2>Sector brief</h2>
+              <span>Grouped notes and discovery questions</span>
+            </div>
+            <div id="briefList" class="brief-list empty-state">Add learning notes to build a brief.</div>
+          </section>
+        </div>
+      </section>
+    </main>
+
+    <script src="app.js"></script>
+  </body>
+</html>

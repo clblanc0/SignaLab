@@ -1,0 +1,10 @@
+{
+  "name": "signalab-startup-agent",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A local MVP for Signalab relationship intelligence, customer discovery, and sector learning.",
+  "scripts": {
+    "dev": "python3 -m http.server 5174",
+    "check": "node --check app.js"
+  }
+}
