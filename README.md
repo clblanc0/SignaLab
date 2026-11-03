@@ -1,3 +1,5 @@
+> **Note:** This repository is the early open-source prototype of SignaLab. The current SignaLab platform is closed-source and under active development. Demos are available on request: kona1449@uab.edu
+
 # SignaLab
 
 Multi-modal biosignal ingestion and standardization platform. Drop in heterogeneous
@@ -11,6 +13,18 @@ immediately. Runs locally, no cloud, your data never leaves your machine.
 > and NWB export are on the roadmap below.
 
 ---
+
+## Prototype vs. current platform
+
+This prototype proved the core idea: drop in heterogeneous recordings, get back an analysis-ready, standards-compliant dataset. The current platform builds on it.
+
+| | This prototype (open) | Current platform (closed) |
+|---|---|---|
+| **Inputs** | EDF EEG + behavioral CSV | EEG, EMG, ECG, HRV, and EHR data |
+| **Outputs** | BIDS-EEG | BIDS, NWB, and HL7 FHIR |
+| **Orchestration** | In-memory job store, worker thread | Prefect-orchestrated pipelines |
+| **Performance** | Not benchmarked | 17,000–32,000x faster than manual workflows in internal benchmarks |
+| **Status** | Reference implementation, frozen | In development with clinical research partners |
 
 ## What works today
 
