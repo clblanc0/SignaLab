@@ -1,4 +1,4 @@
-> **Note:** This repository is the early open-source prototype of SignaLab. The current SignaLab platform is closed-source and under active development. Demos are available on request: kona1449@uab.edu
+> **Note:** This repository is the early open-source prototype of SignaLab. The current SignaLab platform is closed-source and under active development. Demos are available on request: christian.lopezblanco.1@gmail.com
 
 # SignaLab
 
